@@ -26,11 +26,11 @@ const initInfluxDBClient = async () => {
     const influxClient = new influx.InfluxDB(config.influxDB);
 
     // Create database if not exist
-    influxClient.getDatabaseNames().then((names) => {
+    influxClient.getDatabaseNames().then(names => {
         if (!names.includes(config.influxDB.database)) {
             return influxClient.createDatabase(config.influxDB.database);
         }
-    }).catch((error) => {
+    }).catch(error => {
         throw error;
     });
 
@@ -106,7 +106,7 @@ const initServer = async () => {
 };
 
 // Start services
-Promise.all([initInfluxDBClient(), initServer()]).then((items) => {
+Promise.all([initInfluxDBClient(), initServer()]).then(items => {
     const [influxClient, httpServer] = items;
 
     // Display messages
@@ -117,7 +117,7 @@ Promise.all([initInfluxDBClient(), initServer()]).then((items) => {
     let requestCollection = {};
 
     // Move every provided request configuration
-    config.proxy.forEach((proxy) => {
+    config.proxy.forEach(proxy => {
         if (proxy.name !== undefined && proxy.interval !== undefined && proxy.config !== undefined) {
             proxy.config.headers = {...proxy.config.headers, ...{"X-Custom-Request-Name": proxy.name}};
 
@@ -143,7 +143,7 @@ Promise.all([initInfluxDBClient(), initServer()]).then((items) => {
         setInterval(() => {
             axios.all(collection).then(
                 axios.spread((...args) => {
-                    args.forEach((currentResponse) => {
+                    args.forEach(currentResponse => {
                         let proxyName = currentResponse.config.headers["X-Custom-Request-Name"];
                         let responseData = currentResponse.data;
 
@@ -156,7 +156,7 @@ Promise.all([initInfluxDBClient(), initServer()]).then((items) => {
                             }
                         ]).then(() => {
                             logMessage("The data has been saved successfully", "INFO");
-                        }).catch((error) => {
+                        }).catch(error => {
                             logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
                         })
                     });
@@ -164,6 +164,6 @@ Promise.all([initInfluxDBClient(), initServer()]).then((items) => {
             )
         }, interval * 1000);
     }
-}).catch((error) => {
+}).catch(error => {
     logMessage(`An error occurred while trying to run services: ${error}`, "ERROR");
 });
