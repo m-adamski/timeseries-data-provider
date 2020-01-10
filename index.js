@@ -21,6 +21,12 @@ const httpServerAuth = async (request, username, password, h) => {
     return {credentials: null, isValid: false}
 };
 
+const findProxy = (proxyName) => {
+    return config.proxy.find(currentProxy => {
+        return currentProxy.name === proxyName;
+    });
+};
+
 // Create instance of InfluxDB Client
 const initInfluxDBClient = async () => {
     const influxClient = new influx.InfluxDB(config.influxDB);
@@ -38,7 +44,7 @@ const initInfluxDBClient = async () => {
 };
 
 // Create instance of HTTP Server
-const initServer = async () => {
+const initServer = async (influxClient) => {
     const httpServer = hapi.server(config.server.hostConfig);
 
     // Register Basic Auth Plugin
@@ -52,7 +58,7 @@ const initServer = async () => {
 
     // Define routes
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/",
         handler: (request, h) => {
             return h.response({"message": "Hello! API is working!"}).type("application/json");
@@ -60,42 +66,94 @@ const initServer = async () => {
     });
 
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/search",
         handler: (request, h) => {
-            console.log(request);
+
+            // Filter for active proxy configurations and return names
+            let responseCollection = config.proxy.filter(currentProxy => {
+                return currentProxy.active;
+            }).map(currentProxy => {
+                return currentProxy.name;
+            });
+
+            return h.response(responseCollection).type("application/json");
         }
     });
 
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/query",
         handler: (request, h) => {
-            console.log(request);
+            let requestTargets = request.payload["targets"];
+            let requestRange = request.payload["range"];
+            let requestMaxDataPoints = request.payload["maxDataPoints"];
+
+            let responseData = [];
+
+            requestTargets.forEach(targetItem => {
+                let currentProxy = findProxy(targetItem["target"]);
+
+                let runQuery = async () => {
+                    return new Promise((resolve, reject) => {
+                        let currentProxyData = [];
+
+                        // Check if proxy configuration exist and is active
+                        if (currentProxy !== null && currentProxy.active === true) {
+                            let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' LIMIT ${requestMaxDataPoints}`;
+
+                            influxClient.query(targetQuery).then(result => {
+                                result.forEach(resultItem => {
+                                    console.log(resultItem["value"], moment(resultItem["time"]).format("x"));
+
+                                    currentProxyData.push([
+                                        resultItem["value"], moment(resultItem["time"]).format("x")
+                                    ]);
+                                });
+                            });
+                        }
+
+                        console.log(currentProxyData);
+
+                        resolve(currentProxyData);
+                    });
+                };
+
+                runQuery().then(proxyData => {
+                    console.log(proxyData);
+                });
+
+                // responseData.push({
+                //     target: targetItem["target"],
+                //     datapoints: currentProxyData
+                // });
+            });
+
+            return h.response(responseData).type("application/json");
         }
     });
 
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/annotations",
         handler: (request, h) => {
-            console.log(request);
+            console.log(request.payload, request.query);
         }
     });
 
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/tag-keys",
         handler: (request, h) => {
-            console.log(request);
+            console.log(request.payload, request.query);
         }
     });
 
     httpServer.route({
-        method: "GET",
+        method: ["GET", "POST"],
         path: "/tag-values",
         handler: (request, h) => {
-            console.log(request);
+            console.log(request.payload, request.query);
         }
     });
 
@@ -106,64 +164,68 @@ const initServer = async () => {
 };
 
 // Start services
-Promise.all([initInfluxDBClient(), initServer()]).then(items => {
-    const [influxClient, httpServer] = items;
-
-    // Display messages
-    logMessage(`HTTP Server is running and listening at ${httpServer.info.uri}`, "INFO");
+initInfluxDBClient().then(influxClient => {
     logMessage("A database connection has been established", "INFO");
 
-    // Define requests collection grouped by interval
-    let requestCollection = {};
+    initServer(influxClient).then(httpServer => {
+        logMessage(`HTTP Server is running and listening at ${httpServer.info.uri}`, "INFO");
 
-    // Move every provided request configuration
-    config.proxy.forEach(proxy => {
-        if (proxy.name !== undefined && proxy.interval !== undefined && proxy.config !== undefined) {
-            proxy.config.headers = {...proxy.config.headers, ...{"X-Custom-Request-Name": proxy.name}};
+        // Define requests collection grouped by interval
+        let requestCollection = {};
 
-            // Init collection
-            if (!Array.isArray(requestCollection[proxy.interval])) {
-                requestCollection[proxy.interval] = [];
+        // Move every provided request configuration
+        config.proxy.forEach(proxy => {
+            if (proxy.name !== undefined && proxy.interval !== undefined && proxy.config !== undefined) {
+                proxy.config.headers = {...proxy.config.headers, ...{"X-Custom-Request-Name": proxy.name}};
+
+                // Init collection
+                if (!Array.isArray(requestCollection[proxy.interval])) {
+                    requestCollection[proxy.interval] = [];
+                }
+
+                // Push generated request into collection
+                requestCollection[proxy.interval].push(axios(proxy.config));
+
+                // Add schema to influx Client
+                influxClient.addSchema({
+                    measurement: proxy.name,
+                    fields: {
+                        value: influx.FieldType.FLOAT
+                    },
+                    tags: [proxy.name]
+                });
             }
+        });
 
-            // Push generated request into collection
-            requestCollection[proxy.interval].push(axios(proxy.config));
+        // Move every generated request
+        for (const [interval, collection] of Object.entries(requestCollection)) {
+            setInterval(() => {
+                axios.all(collection).then(
+                    axios.spread((...args) => {
+                        args.forEach(currentResponse => {
+                            let proxyName = currentResponse.config.headers["X-Custom-Request-Name"];
+                            let responseData = currentResponse.data;
 
-            // Add schema to influx Client
-            influxClient.addSchema({
-                measurement: proxy.name,
-                fields: proxy.measurement,
-                tags: [proxy.name]
-            });
+                            logMessage(`Data processing for the '${proxyName}' request`, "INFO");
+
+                            influxClient.writePoints([
+                                {
+                                    measurement: proxyName,
+                                    fields: responseData
+                                }
+                            ]).then(() => {
+                                logMessage("The data has been saved successfully", "INFO");
+                            }).catch(error => {
+                                logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
+                            })
+                        });
+                    })
+                )
+            }, interval * 1000);
         }
+    }).catch(error => {
+        logMessage(`An error occurred while trying to run HTTP Server: ${error}`, "ERROR");
     });
-
-    // Move every generated request
-    for (const [interval, collection] of Object.entries(requestCollection)) {
-        setInterval(() => {
-            axios.all(collection).then(
-                axios.spread((...args) => {
-                    args.forEach(currentResponse => {
-                        let proxyName = currentResponse.config.headers["X-Custom-Request-Name"];
-                        let responseData = currentResponse.data;
-
-                        logMessage(`Data processing for the '${proxyName}' request`, "INFO");
-
-                        influxClient.writePoints([
-                            {
-                                measurement: proxyName,
-                                fields: responseData
-                            }
-                        ]).then(() => {
-                            logMessage("The data has been saved successfully", "INFO");
-                        }).catch(error => {
-                            logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
-                        })
-                    });
-                })
-            )
-        }, interval * 1000);
-    }
 }).catch(error => {
-    logMessage(`An error occurred while trying to run services: ${error}`, "ERROR");
+    logMessage(`An error occurred while trying to establish connection to database: ${error}`, "ERROR");
 });
