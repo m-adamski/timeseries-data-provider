@@ -95,8 +95,8 @@ const initServer = async (influxClient) => {
 
                 // Check if proxy configuration exist and is active
                 if (currentProxy !== null && currentProxy.active === true) {
-                    let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' LIMIT ${requestMaxDataPoints}`;
-
+                    let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' ORDER BY time DESC LIMIT ${requestMaxDataPoints}`;
+                    
                     return influxClient.query(targetQuery);
                 }
             });
