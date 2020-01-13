@@ -105,7 +105,7 @@ const initServer = async (influxClient) => {
                 let responseData = [];
 
                 resultCollection.forEach(result => {
-                    let currentProxyData = result.groups().map(resultItem => {
+                    result.groups().forEach(resultItem => {
                         let itemName = resultItem["name"];
                         let itemRowCollection = resultItem["rows"];
 
@@ -113,13 +113,11 @@ const initServer = async (influxClient) => {
                             return [item["value"], moment(item["time"]).format("x")];
                         });
 
-                        return {
+                        responseData.push({
                             target: itemName,
                             datapoints: dataPointCollection
-                        };
+                        });
                     });
-
-                    responseData.push(currentProxyData);
                 });
 
                 return h.response(responseData).type("application/json");
@@ -205,18 +203,25 @@ initInfluxDBClient().then(influxClient => {
                             let proxyName = currentResponse.config.headers["X-Custom-Request-Name"];
                             let responseData = currentResponse.data;
 
-                            logMessage(`Data processing for the '${proxyName}' request`, "INFO");
+                            if (responseData !== null && responseData["value"] !== null) {
 
-                            influxClient.writePoints([
-                                {
-                                    measurement: proxyName,
-                                    fields: responseData
-                                }
-                            ]).then(() => {
-                                logMessage("The data has been saved successfully", "INFO");
-                            }).catch(error => {
-                                logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
-                            })
+                                logMessage(`Data processing for the '${proxyName}' request`, "INFO");
+
+                                influxClient.writePoints([
+                                    {
+                                        measurement: proxyName,
+                                        fields: responseData
+                                    }
+                                ]).then(() => {
+                                    logMessage("The data has been saved successfully", "INFO");
+                                }).catch(error => {
+                                    logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
+                                })
+                            } else if (responseData["error"] !== null) {
+                                logMessage(`An error occurred while processing the server response: ${responseData["error"]}`, "ERROR");
+                            } else {
+                                logMessage("An error occurred while processing the server response", "ERROR");
+                            }
                         });
                     })
                 )
