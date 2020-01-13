@@ -89,47 +89,43 @@ const initServer = async (influxClient) => {
             let requestRange = request.payload["range"];
             let requestMaxDataPoints = request.payload["maxDataPoints"];
 
-            let responseData = [];
-
-            requestTargets.forEach(targetItem => {
+            // Generate collection of promises
+            let promiseCollection = requestTargets.map(targetItem => {
                 let currentProxy = findProxy(targetItem["target"]);
 
-                let runQuery = async () => {
-                    return new Promise((resolve, reject) => {
-                        let currentProxyData = [];
+                // Check if proxy configuration exist and is active
+                if (currentProxy !== null && currentProxy.active === true) {
+                    let targetQuery = `SELECT "value", "time" FROMM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' LIMIT ${requestMaxDataPoints}`;
 
-                        // Check if proxy configuration exist and is active
-                        if (currentProxy !== null && currentProxy.active === true) {
-                            let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' LIMIT ${requestMaxDataPoints}`;
-
-                            influxClient.query(targetQuery).then(result => {
-                                result.forEach(resultItem => {
-                                    console.log(resultItem["value"], moment(resultItem["time"]).format("x"));
-
-                                    currentProxyData.push([
-                                        resultItem["value"], moment(resultItem["time"]).format("x")
-                                    ]);
-                                });
-                            });
-                        }
-
-                        console.log(currentProxyData);
-
-                        resolve(currentProxyData);
-                    });
-                };
-
-                runQuery().then(proxyData => {
-                    console.log(proxyData);
-                });
-
-                // responseData.push({
-                //     target: targetItem["target"],
-                //     datapoints: currentProxyData
-                // });
+                    return influxClient.query(targetQuery);
+                }
             });
 
-            return h.response(responseData).type("application/json");
+            return Promise.all(promiseCollection).then(resultCollection => {
+                let responseData = [];
+
+                resultCollection.forEach(result => {
+                    let currentProxyData = result.groups().map(resultItem => {
+                        let itemName = resultItem["name"];
+                        let itemRowCollection = resultItem["rows"];
+
+                        let dataPointCollection = itemRowCollection.map(item => {
+                            return [item["value"], moment(item["time"]).format("x")];
+                        });
+
+                        return {
+                            target: itemName,
+                            datapoints: dataPointCollection
+                        };
+                    });
+
+                    responseData.push(currentProxyData);
+                });
+
+                return h.response(responseData).type("application/json");
+            }).catch(error => {
+                logMessage(`An error occurred while trying to process query: ${error}`, "ERROR");
+            });
         }
     });
 
@@ -138,6 +134,7 @@ const initServer = async (influxClient) => {
         path: "/annotations",
         handler: (request, h) => {
             console.log(request.payload, request.query);
+            return h.response([]).type("application/json");
         }
     });
 
@@ -146,6 +143,7 @@ const initServer = async (influxClient) => {
         path: "/tag-keys",
         handler: (request, h) => {
             console.log(request.payload, request.query);
+            return h.response([]).type("application/json");
         }
     });
 
@@ -154,6 +152,7 @@ const initServer = async (influxClient) => {
         path: "/tag-values",
         handler: (request, h) => {
             console.log(request.payload, request.query);
+            return h.response([]).type("application/json");
         }
     });
 

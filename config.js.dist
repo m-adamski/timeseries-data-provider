@@ -1,5 +1,3 @@
-const influx = require("influx");
-
 module.exports = {
     server: {
         hostConfig: {
@@ -8,31 +6,23 @@ module.exports = {
         },
         authConfig: {
             active: true,
-            username: "basic-username",
-            password: "basic-password"
+            username: "username",
+            password: "password"
         }
     },
     proxy: [
         {
             name: "example_metric",
-            measurement: {
-                value: influx.FieldType.INTEGER
-            },
+            active: true,
             interval: 10,
             config: {
                 method: "GET",
                 url: "https://example.com/api/v2/metric/example/count.json",
-                auth: {
-                    username: "api-username",
-                    password: "api-password"
-                },
                 transformResponse: [
                     (data) => {
                         let responseData = JSON.parse(data);
 
-                        // Must return object with fields matching defined measurement object
-                        // measurement: { value: influx.FieldType.INTEGER }
-                        return {value: responseData["value"]}
+                        return {value: responseData["count"]}
                     }
                 ]
             }
