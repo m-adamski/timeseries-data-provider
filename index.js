@@ -96,7 +96,7 @@ const initServer = async (influxClient) => {
                 // Check if proxy configuration exist and is active
                 if (currentProxy !== null && currentProxy.active === true) {
                     let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' ORDER BY time DESC LIMIT ${requestMaxDataPoints}`;
-                    
+
                     return influxClient.query(targetQuery);
                 }
             });
@@ -227,6 +227,27 @@ initInfluxDBClient().then(influxClient => {
                 )
             }, interval * 1000);
         }
+
+        setInterval(() => {
+            config.proxy.forEach(currentProxy => {
+                if (currentProxy["autoRemove"]["active"] === true) {
+                    let entryAge = currentProxy["autoRemove"]["age"];
+
+                    if (Number.isInteger(entryAge) && entryAge > 0) {
+                        let queryDate = moment().subtract(entryAge, "hours").utc().format();
+                        let deleteQuery = `DELETE FROM "${currentProxy.name}" WHERE time < '${queryDate}'`;
+
+                        logMessage(`Automatic data cleaning: ${currentProxy.name}`, "INFO");
+
+                        influxClient.query(deleteQuery).then(() => {
+                            logMessage(`The data has been cleared according to the configuration: ${currentProxy.name}`, "INFO");
+                        }).catch(error => {
+                            logMessage(`An error occurred during automatic data cleaning: ${currentProxy.name}: ${error}`, "ERROR");
+                        });
+                    }
+                }
+            });
+        }, 3600000);
     }).catch(error => {
         logMessage(`An error occurred while trying to run HTTP Server: ${error}`, "ERROR");
     });

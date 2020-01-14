@@ -15,6 +15,10 @@ module.exports = {
             name: "example_metric",
             active: true,
             interval: 10,
+            autoRemove: {
+                active: true,
+                age: 30
+            },
             config: {
                 method: "GET",
                 url: "https://example.com/api/v2/metric/example/count.json",
