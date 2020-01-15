@@ -69,6 +69,7 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/search",
         handler: (request, h) => {
+            console.log("search", request.payload);
 
             // Filter for active proxy configurations and return names
             let responseCollection = config.proxy.filter(currentProxy => {
@@ -85,16 +86,24 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/query",
         handler: (request, h) => {
+            console.log("query", request.payload);
+
             let requestTargets = request.payload["targets"];
             let requestRange = request.payload["range"];
             let requestMaxDataPoints = request.payload["maxDataPoints"];
 
+            let targetTypes = [];
+
             // Generate collection of promises
             let promiseCollection = requestTargets.map(targetItem => {
-                let currentProxy = findProxy(targetItem["target"]);
+                let targetName = targetItem["target"];
+                let targetType = targetItem["type"];
+                let currentProxy = findProxy(targetName);
 
                 // Check if proxy configuration exist and is active
                 if (currentProxy !== null && currentProxy.active === true) {
+                    targetTypes[targetName] = targetType;
+
                     let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' ORDER BY time DESC LIMIT ${requestMaxDataPoints}`;
 
                     return influxClient.query(targetQuery);
@@ -103,6 +112,7 @@ const initServer = async (influxClient) => {
 
             return Promise.all(promiseCollection).then(resultCollection => {
                 let responseData = [];
+                let responseTableData = [];
 
                 resultCollection.forEach(result => {
                     result.groups().forEach(resultItem => {
@@ -113,12 +123,32 @@ const initServer = async (influxClient) => {
                             return [item["value"], moment(item["time"]).format("x")];
                         });
 
-                        responseData.push({
-                            target: itemName,
-                            datapoints: dataPointCollection
-                        });
+                        if (targetTypes[itemName] === "timeserie") {
+                            responseData.push({
+                                target: itemName,
+                                datapoints: dataPointCollection
+                            });
+                        } else if (targetTypes[itemName] === "table") {
+                            responseTableData = dataPointCollection.map(item => {
+                                item.unshift(itemName);
+
+                                return item;
+                            });
+                        }
                     });
                 });
+
+                if (responseTableData.length > 0) {
+                    responseData.push({
+                        "columns": [
+                            {"text": "Target", "type": "string"},
+                            {"text": "Value", "type": "number"},
+                            {"text": "Time", "type": "time"}
+                        ],
+                        "rows": responseTableData,
+                        "type": "table"
+                    });
+                }
 
                 return h.response(responseData).type("application/json");
             }).catch(error => {
@@ -131,7 +161,7 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/annotations",
         handler: (request, h) => {
-            console.log(request.payload, request.query);
+            console.log("annotations", request.payload);
             return h.response([]).type("application/json");
         }
     });
@@ -140,7 +170,7 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/tag-keys",
         handler: (request, h) => {
-            console.log(request.payload, request.query);
+            console.log("tag-keys", request.payload);
             return h.response([]).type("application/json");
         }
     });
@@ -149,7 +179,7 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/tag-values",
         handler: (request, h) => {
-            console.log(request.payload, request.query);
+            console.log("tag-values", request.payload);
             return h.response([]).type("application/json");
         }
     });
