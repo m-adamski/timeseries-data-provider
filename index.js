@@ -120,10 +120,10 @@ const initServer = async (influxClient) => {
                         let itemRowCollection = resultItem["rows"];
 
                         let dataPointCollection = itemRowCollection.map(item => {
-                            return [item["value"], moment(item["time"]).format("x")];
+                            return [item["value"], Number.parseInt(moment(item["time"]).format("x"))];
                         });
 
-                        if (targetTypes[itemName] === "timeserie") {
+                        if (targetTypes[itemName] === "timeseries") {
                             responseData.push({
                                 target: itemName,
                                 datapoints: dataPointCollection
