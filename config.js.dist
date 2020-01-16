@@ -16,8 +16,8 @@ module.exports = {
             active: true,
             interval: 10,
             autoRemove: {
-                active: true,
-                age: 30
+                interval: 86400,
+                age: 86400
             },
             config: {
                 method: "GET",
