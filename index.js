@@ -227,7 +227,7 @@ initInfluxDBClient().then(influxClient => {
 
                             if (responseData !== null && responseData["value"] !== null) {
 
-                                logMessage(`Data processing for the '${proxyName}' request`, "INFO");
+                                logMessage(`Data processing for the '${proxyName}' request: ${responseData}`, "INFO");
 
                                 influxClient.writePoints([
                                     {
