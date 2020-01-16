@@ -8,8 +8,12 @@ const moment = require("moment");
 const config = require("./config");
 
 // Define function to display specified message
-const logMessage = (message, type) => {
-    console.log(`[${moment().format("YYYY-MM-DD HH:mm:ss")}][${type}] ${message}`);
+const logMessage = (message, type, series) => {
+    let messageDate = moment().format("YYYY-MM-DD HH:mm:ss");
+    let messageType = type || "";
+    let messageSeries = series || "";
+
+    console.log(`[${messageDate}][${messageType}][${messageSeries}] ${message}`);
 };
 
 // Authenticate
@@ -186,90 +190,98 @@ const initServer = async (influxClient) => {
 initInfluxDBClient().then(influxClient => {
     logMessage("A database connection has been established", "INFO");
 
+    // Add schema to Influx Client
+    config.proxy.forEach(proxyItem => {
+        if (proxyItem.active && proxyItem.interval > 0) {
+            influxClient.addSchema({
+                measurement: proxyItem.name,
+                fields: {
+                    value: influx.FieldType.FLOAT
+                },
+                tags: [proxyItem.name]
+            });
+        }
+    });
+
     initServer(influxClient).then(httpServer => {
         logMessage(`HTTP Server is running and listening at ${httpServer.info.uri}`, "INFO");
 
-        // Define requests collection grouped by interval
-        let requestCollection = {};
+        // Add X-Custom-Request-Name header to request configuration
+        config.proxy.forEach(proxyItem => {
+            proxyItem.config.headers = {...proxyItem.config.headers, ...{"X-Custom-Request-Name": proxyItem.name}};
+        });
 
-        // Move every provided request configuration
-        config.proxy.forEach(proxy => {
-            if (proxy.name !== undefined && proxy.interval !== undefined && proxy.config !== undefined) {
-                proxy.config.headers = {...proxy.config.headers, ...{"X-Custom-Request-Name": proxy.name}};
-
-                // Init collection
-                if (!Array.isArray(requestCollection[proxy.interval])) {
-                    requestCollection[proxy.interval] = [];
-                }
-
-                // Push generated request into collection
-                requestCollection[proxy.interval].push(axios(proxy.config));
-
-                // Add schema to influx Client
-                influxClient.addSchema({
-                    measurement: proxy.name,
-                    fields: {
-                        value: influx.FieldType.FLOAT
-                    },
-                    tags: [proxy.name]
-                });
+        // Prepare collection to run
+        let proxyCollection = config.proxy.filter(proxyItem => {
+            return proxyItem.active && proxyItem.interval > 0;
+        }).map(proxyItem => {
+            return {
+                proxy: proxyItem,
+                lastRun: null,
+                lastRemove: null
             }
         });
 
-        // Move every generated request
-        for (const [interval, collection] of Object.entries(requestCollection)) {
-            setInterval(() => {
-                axios.all(collection).then(
-                    axios.spread((...args) => {
-                        args.forEach(currentResponse => {
-                            let proxyName = currentResponse.config.headers["X-Custom-Request-Name"];
-                            let responseData = currentResponse.data;
-
-                            if (responseData !== null && responseData["value"] !== null) {
-
-                                logMessage(`Data processing for the '${proxyName}': ${responseData["value"]}`, "INFO");
-
-                                influxClient.writePoints([
-                                    {
-                                        measurement: proxyName,
-                                        fields: responseData
-                                    }
-                                ]).then(() => {
-                                    logMessage("The data has been saved successfully", "INFO");
-                                }).catch(error => {
-                                    logMessage(`An error occurred while trying to save the data: ${error}`, "ERROR");
-                                })
-                            } else if (responseData["error"] !== null) {
-                                logMessage(`An error occurred while processing the server response: ${responseData["error"]}`, "ERROR");
-                            } else {
-                                logMessage("An error occurred while processing the server response", "ERROR");
-                            }
-                        });
-                    })
-                )
-            }, interval * 1000);
-        }
-
         setInterval(() => {
-            config.proxy.forEach(currentProxy => {
-                if (currentProxy["autoRemove"]["active"] === true) {
-                    let entryAge = currentProxy["autoRemove"]["age"];
+            let intervalDate = moment();
 
-                    if (Number.isInteger(entryAge) && entryAge > 0) {
-                        let queryDate = moment().subtract(entryAge, "hours").utc().format();
-                        let deleteQuery = `DELETE FROM "${currentProxy.name}" WHERE time < '${queryDate}'`;
+            proxyCollection.forEach(proxyItem => {
+                let proxyName = proxyItem.proxy.name;
+                let proxyInterval = proxyItem.proxy.interval;
+                let proxyRemoveInterval = proxyItem.proxy.autoRemove.interval;
+                let proxyRemoveAge = proxyItem.proxy.autoRemove.age;
+                let proxyRequestConfig = proxyItem.proxy.config;
+                let lastRun = proxyItem.lastRun;
+                let lastRemove = proxyItem.lastRemove;
 
-                        logMessage(`Automatic data cleaning: ${currentProxy.name}`, "INFO");
+                // Check if current proxy need to be process
+                if (!lastRun || (lastRun && moment(intervalDate).isAfter(moment(lastRun).add(proxyInterval, "seconds")))) {
+                    proxyItem.lastRun = intervalDate;
 
-                        influxClient.query(deleteQuery).then(() => {
-                            logMessage(`The data has been cleared according to the configuration: ${currentProxy.name}`, "INFO");
-                        }).catch(error => {
-                            logMessage(`An error occurred during automatic data cleaning: ${currentProxy.name}: ${error}`, "ERROR");
-                        });
-                    }
+                    // Send request
+                    axios(proxyRequestConfig).then(response => {
+                        let proxyName = response.config.headers["X-Custom-Request-Name"];
+                        let responseValue = response.data;
+
+                        if (responseValue !== null && responseValue !== undefined) {
+
+                            logMessage("Processing data..", "INFO", proxyName);
+
+                            influxClient.writePoints([
+                                {
+                                    measurement: proxyName,
+                                    fields: {
+                                        value: responseValue
+                                    }
+                                }
+                            ]).then(() => {
+                                logMessage("The data has been saved successfully", "INFO", proxyName);
+                            }).catch(error => {
+                                logMessage("An error occurred while trying to save the data", "ERROR", proxyName);
+                            })
+                        } else {
+                            logMessage("An error occurred while processing the server response", "ERROR", proxyName);
+                        }
+                    });
+                }
+
+                // Check if data need to be auto remove
+                if (!lastRemove || (lastRemove && proxyRemoveInterval && moment(intervalDate).isAfter(moment(lastRemove).add(proxyRemoveInterval, "seconds")))) {
+                    proxyItem.lastRemove = intervalDate;
+
+                    let queryDate = moment().subtract(proxyRemoveAge, "seconds").utc().format();
+                    let deleteQuery = `DELETE FROM "${proxyName}" WHERE time < '${queryDate}'`;
+
+                    logMessage(`Cleaning entries older than ${queryDate}`, "INFO", proxyName);
+
+                    influxClient.query(deleteQuery).then(() => {
+                        logMessage("Old entries have been successfully deleted", "INFO", proxyName);
+                    }).catch(error => {
+                        logMessage("An error occurred while clearing old entries", "ERROR", proxyName);
+                    });
                 }
             });
-        }, 3600000);
+        }, 1000);
     }).catch(error => {
         logMessage(`An error occurred while trying to run HTTP Server: ${error}`, "ERROR");
     });
