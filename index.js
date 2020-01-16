@@ -69,9 +69,6 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/search",
         handler: (request, h) => {
-            console.log("search", request.payload);
-
-            // Filter for active proxy configurations and return names
             let responseCollection = config.proxy.filter(currentProxy => {
                 return currentProxy.active;
             }).map(currentProxy => {
@@ -86,8 +83,6 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/query",
         handler: (request, h) => {
-            console.log("query", request.payload);
-
             let requestTargets = request.payload["targets"];
             let requestRange = request.payload["range"];
             let requestMaxDataPoints = request.payload["maxDataPoints"];
@@ -104,7 +99,7 @@ const initServer = async (influxClient) => {
                 if (currentProxy !== null && currentProxy.active === true) {
                     targetTypes[targetName] = targetType;
 
-                    let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' ORDER BY time DESC LIMIT ${requestMaxDataPoints}`;
+                    let targetQuery = `SELECT "value", "time" FROM "${targetItem["target"]}" WHERE time >= '${requestRange["from"]}' AND time <= '${requestRange["to"]}' LIMIT ${requestMaxDataPoints}`;
 
                     return influxClient.query(targetQuery);
                 }
@@ -161,7 +156,6 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/annotations",
         handler: (request, h) => {
-            console.log("annotations", request.payload);
             return h.response([]).type("application/json");
         }
     });
@@ -170,7 +164,6 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/tag-keys",
         handler: (request, h) => {
-            console.log("tag-keys", request.payload);
             return h.response([]).type("application/json");
         }
     });
@@ -179,7 +172,6 @@ const initServer = async (influxClient) => {
         method: ["GET", "POST"],
         path: "/tag-values",
         handler: (request, h) => {
-            console.log("tag-values", request.payload);
             return h.response([]).type("application/json");
         }
     });
